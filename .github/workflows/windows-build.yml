@@ -1,0 +1,60 @@
+name: 构建 Windows 版（yt-dlpGUI）
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: 安装依赖
+        run: pip install pytest pyinstaller
+
+      - name: 下载官方 yt-dlp.exe（Windows 内核，自包含）
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Invoke-WebRequest -Uri "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe" -OutFile "dist\yt-dlp.exe"
+
+      - name: 单测（逻辑断言 + 用刚下载的 Windows 内核跑真实进程集成测试）
+        shell: pwsh
+        working-directory: yt-dlp-gui-py
+        env:
+          YTDLP_TEST_KERNEL: dist\yt-dlp.exe
+        run: pytest -q tests
+
+      - name: 校验内核可用
+        shell: pwsh
+        working-directory: yt-dlp-gui-py
+        run: .\dist\yt-dlp.exe --version
+
+      - name: PyInstaller 打包（单文件 yt-dlpGUI.exe）
+        working-directory: yt-dlp-gui-py
+        run: python -m PyInstaller --noconfirm --clean yt-dlpGUI.spec
+
+      - name: 冒烟：打包产物可启动并自动退出
+        shell: pwsh
+        working-directory: yt-dlp-gui-py
+        run: .\dist\yt-dlpGUI.exe --selftest
+
+      - name: 组装发布 zip（GUI + 内核 + 说明）
+        shell: pwsh
+        working-directory: yt-dlp-gui-py
+        run: |
+          Copy-Item "README.md" "dist\README.txt"
+          Compress-Archive -Path "dist\yt-dlpGUI.exe","dist\yt-dlp.exe","dist\README.txt" -DestinationPath "dist\yt-dlpGUI-windows.zip" -Force
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: yt-dlpGUI-windows
+          path: yt-dlp-gui-py/dist/yt-dlpGUI-windows.zip
